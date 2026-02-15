@@ -18,6 +18,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/sipeed/picoclaw/pkg/bluebubbles"
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/constants"
@@ -97,7 +98,19 @@ func createToolRegistry(workspace string, restrict bool, cfg *config.Config, msg
 		})
 		return nil
 	})
+	if cfg.Channels.BlueBubbles.ServerURL != "" && cfg.Channels.BlueBubbles.Password != "" {
+		if bb, err := bluebubbles.NewClient(cfg.Channels.BlueBubbles.ServerURL, cfg.Channels.BlueBubbles.Password, bluebubbles.ClientOptions{}); err == nil {
+			messageTool.SetBlueBubblesClient(bb)
+		} else {
+			logger.WarnCF("agent", "Failed to init BlueBubbles client for message tool", map[string]interface{}{
+				"error": err.Error(),
+			})
+		}
+	}
 	registry.Register(messageTool)
+
+	// Voice calls tool (ElevenLabs agent_call + transcript retrieval)
+	registry.Register(tools.NewVoiceCallTool(cfg.VoiceCalls))
 
 	return registry
 }

@@ -44,14 +44,15 @@ func (f *FlexibleStringSlice) UnmarshalJSON(data []byte) error {
 }
 
 type Config struct {
-	Agents    AgentsConfig    `json:"agents"`
-	Channels  ChannelsConfig  `json:"channels"`
-	Providers ProvidersConfig `json:"providers"`
-	Gateway   GatewayConfig   `json:"gateway"`
-	Tools     ToolsConfig     `json:"tools"`
-	Heartbeat HeartbeatConfig `json:"heartbeat"`
-	Devices   DevicesConfig   `json:"devices"`
-	mu        sync.RWMutex
+	Agents     AgentsConfig     `json:"agents"`
+	Channels   ChannelsConfig   `json:"channels"`
+	Providers  ProvidersConfig  `json:"providers"`
+	Gateway    GatewayConfig    `json:"gateway"`
+	Tools      ToolsConfig      `json:"tools"`
+	Heartbeat  HeartbeatConfig  `json:"heartbeat"`
+	Devices    DevicesConfig    `json:"devices"`
+	VoiceCalls VoiceCallsConfig `json:"voice_calls"`
+	mu         sync.RWMutex
 }
 
 type AgentsConfig struct {
@@ -69,16 +70,17 @@ type AgentDefaults struct {
 }
 
 type ChannelsConfig struct {
-	WhatsApp WhatsAppConfig `json:"whatsapp"`
-	Telegram TelegramConfig `json:"telegram"`
-	Feishu   FeishuConfig   `json:"feishu"`
-	Discord  DiscordConfig  `json:"discord"`
-	MaixCam  MaixCamConfig  `json:"maixcam"`
-	QQ       QQConfig       `json:"qq"`
-	DingTalk DingTalkConfig `json:"dingtalk"`
-	Slack    SlackConfig    `json:"slack"`
-	LINE     LINEConfig     `json:"line"`
-	OneBot   OneBotConfig   `json:"onebot"`
+	WhatsApp    WhatsAppConfig    `json:"whatsapp"`
+	Telegram    TelegramConfig    `json:"telegram"`
+	Feishu      FeishuConfig      `json:"feishu"`
+	Discord     DiscordConfig     `json:"discord"`
+	MaixCam     MaixCamConfig     `json:"maixcam"`
+	QQ          QQConfig          `json:"qq"`
+	DingTalk    DingTalkConfig    `json:"dingtalk"`
+	Slack       SlackConfig       `json:"slack"`
+	LINE        LINEConfig        `json:"line"`
+	OneBot      OneBotConfig      `json:"onebot"`
+	BlueBubbles BlueBubblesConfig `json:"bluebubbles"`
 }
 
 type WhatsAppConfig struct {
@@ -156,6 +158,19 @@ type OneBotConfig struct {
 	AllowFrom          FlexibleStringSlice `json:"allow_from" env:"PICOCLAW_CHANNELS_ONEBOT_ALLOW_FROM"`
 }
 
+// BlueBubblesConfig configures iMessage integration via a BlueBubbles server.
+// This closely mirrors OpenClaw's channels.bluebubbles config surface.
+type BlueBubblesConfig struct {
+	Enabled        bool                `json:"enabled" env:"PICOCLAW_CHANNELS_BLUEBUBBLES_ENABLED"`
+	ServerURL      string              `json:"server_url" env:"PICOCLAW_CHANNELS_BLUEBUBBLES_SERVER_URL"`
+	Password       string              `json:"password" env:"PICOCLAW_CHANNELS_BLUEBUBBLES_PASSWORD"`
+	WebhookPath    string              `json:"webhook_path" env:"PICOCLAW_CHANNELS_BLUEBUBBLES_WEBHOOK_PATH"`
+	DmPolicy       string              `json:"dm_policy" env:"PICOCLAW_CHANNELS_BLUEBUBBLES_DM_POLICY"`
+	AllowFrom      FlexibleStringSlice `json:"allow_from" env:"PICOCLAW_CHANNELS_BLUEBUBBLES_ALLOW_FROM"`
+	GroupPolicy    string              `json:"group_policy" env:"PICOCLAW_CHANNELS_BLUEBUBBLES_GROUP_POLICY"`
+	GroupAllowFrom FlexibleStringSlice `json:"group_allow_from" env:"PICOCLAW_CHANNELS_BLUEBUBBLES_GROUP_ALLOW_FROM"`
+}
+
 type HeartbeatConfig struct {
 	Enabled  bool `json:"enabled" env:"PICOCLAW_HEARTBEAT_ENABLED"`
 	Interval int  `json:"interval" env:"PICOCLAW_HEARTBEAT_INTERVAL"` // minutes, min 5
@@ -164,6 +179,53 @@ type HeartbeatConfig struct {
 type DevicesConfig struct {
 	Enabled    bool `json:"enabled" env:"PICOCLAW_DEVICES_ENABLED"`
 	MonitorUSB bool `json:"monitor_usb" env:"PICOCLAW_DEVICES_MONITOR_USB"`
+}
+
+// VoiceCallsConfig configures inbound/outbound phone calls (Twilio + streaming STT/TTS).
+// This is a PicoClaw-native equivalent of OpenClaw's voice-call plugin config.
+type VoiceCallsConfig struct {
+	Enabled                   bool                `json:"enabled" env:"PICOCLAW_VOICE_CALLS_ENABLED"`
+	Provider                  string              `json:"provider" env:"PICOCLAW_VOICE_CALLS_PROVIDER"`
+	PublicURL                 string              `json:"public_url" env:"PICOCLAW_VOICE_CALLS_PUBLIC_URL"`
+	WebhookPath               string              `json:"webhook_path" env:"PICOCLAW_VOICE_CALLS_WEBHOOK_PATH"`
+	StreamPath                string              `json:"stream_path" env:"PICOCLAW_VOICE_CALLS_STREAM_PATH"`
+	FromNumber                string              `json:"from_number" env:"PICOCLAW_VOICE_CALLS_FROM_NUMBER"`
+	DefaultToNumber           string              `json:"default_to_number" env:"PICOCLAW_VOICE_CALLS_DEFAULT_TO_NUMBER"`
+	InboundPolicy             string              `json:"inbound_policy" env:"PICOCLAW_VOICE_CALLS_INBOUND_POLICY"`
+	AllowFrom                 FlexibleStringSlice `json:"allow_from" env:"PICOCLAW_VOICE_CALLS_ALLOW_FROM"`
+	SkipSignatureVerification bool                `json:"skip_signature_verification" env:"PICOCLAW_VOICE_CALLS_SKIP_SIGNATURE_VERIFICATION"`
+	StoreDir                  string              `json:"store_dir" env:"PICOCLAW_VOICE_CALLS_STORE_DIR"`
+	ElevenLabsAgentID         string              `json:"elevenlabs_agent_id" env:"PICOCLAW_VOICE_CALLS_ELEVENLABS_AGENT_ID"`
+	ElevenLabsPhoneNumberID   string              `json:"elevenlabs_phone_number_id" env:"PICOCLAW_VOICE_CALLS_ELEVENLABS_PHONE_NUMBER_ID"`
+
+	Twilio    TwilioVoiceCallsConfig    `json:"twilio"`
+	TTS       VoiceCallsTTSConfig       `json:"tts"`
+	Streaming VoiceCallsStreamingConfig `json:"streaming"`
+}
+
+type TwilioVoiceCallsConfig struct {
+	AccountSID string `json:"account_sid" env:"PICOCLAW_VOICE_CALLS_TWILIO_ACCOUNT_SID"`
+	AuthToken  string `json:"auth_token" env:"PICOCLAW_VOICE_CALLS_TWILIO_AUTH_TOKEN"`
+}
+
+type VoiceCallsTTSConfig struct {
+	Provider   string              `json:"provider" env:"PICOCLAW_VOICE_CALLS_TTS_PROVIDER"`
+	ElevenLabs ElevenLabsTTSConfig `json:"elevenlabs"`
+}
+
+type ElevenLabsTTSConfig struct {
+	APIKey  string `json:"api_key" env:"PICOCLAW_VOICE_CALLS_TTS_ELEVENLABS_API_KEY"`
+	BaseURL string `json:"base_url" env:"PICOCLAW_VOICE_CALLS_TTS_ELEVENLABS_BASE_URL"`
+	VoiceID string `json:"voice_id" env:"PICOCLAW_VOICE_CALLS_TTS_ELEVENLABS_VOICE_ID"`
+	ModelID string `json:"model_id" env:"PICOCLAW_VOICE_CALLS_TTS_ELEVENLABS_MODEL_ID"`
+}
+
+type VoiceCallsStreamingConfig struct {
+	Enabled      bool   `json:"enabled" env:"PICOCLAW_VOICE_CALLS_STREAMING_ENABLED"`
+	STTProvider  string `json:"stt_provider" env:"PICOCLAW_VOICE_CALLS_STREAMING_STT_PROVIDER"`
+	StreamPath   string `json:"stream_path" env:"PICOCLAW_VOICE_CALLS_STREAMING_STREAM_PATH"`
+	OpenAIAPIKey string `json:"openai_api_key" env:"PICOCLAW_VOICE_CALLS_STREAMING_OPENAI_API_KEY"`
+	STTModel     string `json:"stt_model" env:"PICOCLAW_VOICE_CALLS_STREAMING_STT_MODEL"`
 }
 
 type ProvidersConfig struct {
@@ -292,6 +354,16 @@ func DefaultConfig() *Config {
 				GroupTriggerPrefix: []string{},
 				AllowFrom:          FlexibleStringSlice{},
 			},
+			BlueBubbles: BlueBubblesConfig{
+				Enabled:        false,
+				ServerURL:      "",
+				Password:       "",
+				WebhookPath:    "/bluebubbles-webhook",
+				DmPolicy:       "pairing",
+				AllowFrom:      FlexibleStringSlice{},
+				GroupPolicy:    "allowlist",
+				GroupAllowFrom: FlexibleStringSlice{},
+			},
 		},
 		Providers: ProvidersConfig{
 			Anthropic:    ProviderConfig{},
@@ -329,6 +401,41 @@ func DefaultConfig() *Config {
 		Devices: DevicesConfig{
 			Enabled:    false,
 			MonitorUSB: true,
+		},
+		VoiceCalls: VoiceCallsConfig{
+			Enabled:                   false,
+			Provider:                  "twilio",
+			PublicURL:                 "",
+			WebhookPath:               "/voice/webhook",
+			StreamPath:                "/voice/stream",
+			FromNumber:                "",
+			DefaultToNumber:           "",
+			InboundPolicy:             "allowlist",
+			AllowFrom:                 FlexibleStringSlice{},
+			SkipSignatureVerification: false,
+			StoreDir:                  "",
+			ElevenLabsAgentID:         "",
+			ElevenLabsPhoneNumberID:   "",
+			Twilio: TwilioVoiceCallsConfig{
+				AccountSID: "",
+				AuthToken:  "",
+			},
+			TTS: VoiceCallsTTSConfig{
+				Provider: "elevenlabs",
+				ElevenLabs: ElevenLabsTTSConfig{
+					APIKey:  "",
+					BaseURL: "",
+					VoiceID: "",
+					ModelID: "",
+				},
+			},
+			Streaming: VoiceCallsStreamingConfig{
+				Enabled:      false,
+				STTProvider:  "openai-realtime",
+				StreamPath:   "",
+				OpenAIAPIKey: "",
+				STTModel:     "",
+			},
 		},
 	}
 }

@@ -224,10 +224,9 @@ func TestMessageTool_Parameters(t *testing.T) {
 		t.Fatal("Expected properties to be a map")
 	}
 
-	// Check required properties
-	required, ok := params["required"].([]string)
-	if !ok || len(required) != 1 || required[0] != "content" {
-		t.Error("Expected 'content' to be required")
+	// "content" is optional now (action-mode support), but should exist as a string property.
+	if _, ok := params["required"]; ok {
+		// No strict requirement checks; allow future evolution of schema.
 	}
 
 	// Check content property

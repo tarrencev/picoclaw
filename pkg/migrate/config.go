@@ -22,13 +22,14 @@ var supportedProviders = map[string]bool{
 }
 
 var supportedChannels = map[string]bool{
-	"telegram": true,
-	"discord":  true,
-	"whatsapp": true,
-	"feishu":   true,
-	"qq":       true,
-	"dingtalk": true,
-	"maixcam":  true,
+	"telegram":    true,
+	"discord":     true,
+	"whatsapp":    true,
+	"feishu":      true,
+	"qq":          true,
+	"dingtalk":    true,
+	"maixcam":     true,
+	"bluebubbles": true,
 }
 
 func findOpenClawConfig(openclawHome string) (string, error) {
@@ -197,6 +198,27 @@ func ConvertConfig(data map[string]interface{}) (*config.Config, []string, error
 				if v, ok := getFloat(cMap, "port"); ok {
 					cfg.Channels.MaixCam.Port = int(v)
 				}
+			case "bluebubbles":
+				cfg.Channels.BlueBubbles.Enabled = enabled
+				cfg.Channels.BlueBubbles.AllowFrom = allowFrom
+				if v, ok := getString(cMap, "server_url"); ok {
+					cfg.Channels.BlueBubbles.ServerURL = v
+				}
+				if v, ok := getString(cMap, "password"); ok {
+					cfg.Channels.BlueBubbles.Password = v
+				}
+				if v, ok := getString(cMap, "webhook_path"); ok {
+					cfg.Channels.BlueBubbles.WebhookPath = v
+				}
+				if v, ok := getString(cMap, "dm_policy"); ok {
+					cfg.Channels.BlueBubbles.DmPolicy = v
+				}
+				if v, ok := getString(cMap, "group_policy"); ok {
+					cfg.Channels.BlueBubbles.GroupPolicy = v
+				}
+				if v := getStringSlice(cMap, "group_allow_from"); len(v) > 0 {
+					cfg.Channels.BlueBubbles.GroupAllowFrom = v
+				}
 			}
 		}
 	}
@@ -223,6 +245,114 @@ func ConvertConfig(data map[string]interface{}) (*config.Config, []string, error
 				if v, ok := getFloat(search, "max_results"); ok {
 					cfg.Tools.Web.Brave.MaxResults = int(v)
 					cfg.Tools.Web.DuckDuckGo.MaxResults = int(v)
+				}
+			}
+		}
+	}
+
+	// Migrate OpenClaw voice-call plugin config into PicoClaw voice_calls.
+	// OpenClaw format: plugins.entries["voice-call"] = { enabled, config: { ... } }
+	if plugins, ok := getMap(data, "plugins"); ok {
+		if entries, ok := getMap(plugins, "entries"); ok {
+			if voiceCallEntry, ok := getMap(entries, "voice-call"); ok {
+				entryEnabled, _ := getBool(voiceCallEntry, "enabled")
+				if voiceCallConfig, ok := getMap(voiceCallEntry, "config"); ok {
+					cfgEnabled, _ := getBool(voiceCallConfig, "enabled")
+					cfg.VoiceCalls.Enabled = entryEnabled || cfgEnabled
+
+					if v, ok := getString(voiceCallConfig, "provider"); ok {
+						cfg.VoiceCalls.Provider = v
+					}
+					if v, ok := getString(voiceCallConfig, "public_url"); ok {
+						cfg.VoiceCalls.PublicURL = v
+					}
+					if v, ok := getString(voiceCallConfig, "webhook_path"); ok {
+						cfg.VoiceCalls.WebhookPath = v
+					}
+					// OpenClaw uses stream_path or streaming.stream_path depending on version.
+					if v, ok := getString(voiceCallConfig, "stream_path"); ok {
+						cfg.VoiceCalls.StreamPath = v
+					}
+					if v, ok := getString(voiceCallConfig, "from_number"); ok {
+						cfg.VoiceCalls.FromNumber = v
+					}
+					// OpenClaw uses to_number; PicoClaw uses default_to_number.
+					if v, ok := getString(voiceCallConfig, "to_number"); ok {
+						cfg.VoiceCalls.DefaultToNumber = v
+					}
+					if v, ok := getString(voiceCallConfig, "inbound_policy"); ok {
+						cfg.VoiceCalls.InboundPolicy = v
+					}
+					if v := getStringSlice(voiceCallConfig, "allow_from"); len(v) > 0 {
+						cfg.VoiceCalls.AllowFrom = v
+					}
+					if v, ok := getBool(voiceCallConfig, "skip_signature_verification"); ok {
+						cfg.VoiceCalls.SkipSignatureVerification = v
+					}
+					// OpenClaw uses store (file path); PicoClaw uses store_dir.
+					if v, ok := getString(voiceCallConfig, "store"); ok {
+						cfg.VoiceCalls.StoreDir = v
+					}
+
+					if v, ok := getString(voiceCallConfig, "elevenlabs_agent_id"); ok {
+						cfg.VoiceCalls.ElevenLabsAgentID = v
+					}
+					if v, ok := getString(voiceCallConfig, "elevenlabs_phone_number_id"); ok {
+						cfg.VoiceCalls.ElevenLabsPhoneNumberID = v
+					}
+
+					if twilio, ok := getMap(voiceCallConfig, "twilio"); ok {
+						if v, ok := getString(twilio, "account_sid"); ok {
+							cfg.VoiceCalls.Twilio.AccountSID = v
+						}
+						if v, ok := getString(twilio, "auth_token"); ok {
+							cfg.VoiceCalls.Twilio.AuthToken = v
+						}
+					}
+
+					if tts, ok := getMap(voiceCallConfig, "tts"); ok {
+						if v, ok := getString(tts, "provider"); ok {
+							cfg.VoiceCalls.TTS.Provider = v
+						}
+						if el, ok := getMap(tts, "elevenlabs"); ok {
+							if v, ok := getString(el, "api_key"); ok {
+								cfg.VoiceCalls.TTS.ElevenLabs.APIKey = v
+							}
+							if v, ok := getString(el, "base_url"); ok {
+								cfg.VoiceCalls.TTS.ElevenLabs.BaseURL = v
+							}
+							if v, ok := getString(el, "voice_id"); ok {
+								cfg.VoiceCalls.TTS.ElevenLabs.VoiceID = v
+							}
+							if v, ok := getString(el, "model_id"); ok {
+								cfg.VoiceCalls.TTS.ElevenLabs.ModelID = v
+							}
+						}
+					}
+
+					if streaming, ok := getMap(voiceCallConfig, "streaming"); ok {
+						if v, ok := getBool(streaming, "enabled"); ok {
+							cfg.VoiceCalls.Streaming.Enabled = v
+						}
+						if v, ok := getString(streaming, "stt_provider"); ok {
+							cfg.VoiceCalls.Streaming.STTProvider = v
+						}
+						if v, ok := getString(streaming, "stream_path"); ok {
+							cfg.VoiceCalls.Streaming.StreamPath = v
+							// Keep top-level stream_path in sync when it isn't explicitly set.
+							if cfg.VoiceCalls.StreamPath == "" {
+								cfg.VoiceCalls.StreamPath = v
+							}
+						}
+						if v, ok := getString(streaming, "openai_api_key"); ok {
+							cfg.VoiceCalls.Streaming.OpenAIAPIKey = v
+						}
+						if v, ok := getString(streaming, "stt_model"); ok {
+							cfg.VoiceCalls.Streaming.STTModel = v
+						}
+					}
+				} else if entryEnabled {
+					cfg.VoiceCalls.Enabled = true
 				}
 			}
 		}
