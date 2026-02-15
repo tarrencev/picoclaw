@@ -6,16 +6,23 @@ import (
 )
 
 var migrateableFiles = []string{
+	".gitignore",
 	"AGENTS.md",
 	"SOUL.md",
+	"IDENTITY.md",
+	"MEMORY.md",
 	"USER.md",
 	"TOOLS.md",
 	"HEARTBEAT.md",
+	"client_secret.json",
 }
 
 var migrateableDirs = []string{
 	"memory",
 	"skills",
+	"config",
+	"research",
+	"users",
 }
 
 func PlanWorkspaceMigration(srcWorkspace, dstWorkspace string, force bool) ([]Action, error) {
@@ -27,6 +34,21 @@ func PlanWorkspaceMigration(srcWorkspace, dstWorkspace string, force bool) ([]Ac
 		action := planFileCopy(src, dst, force)
 		if action.Type != ActionSkip || action.Description != "" {
 			actions = append(actions, action)
+		}
+	}
+
+	// Compatibility: OpenClaw often stores long-term memory at workspace/MEMORY.md,
+	// while PicoClaw expects workspace/memory/MEMORY.md. Copy it to the expected
+	// PicoClaw location as well (unless OpenClaw already has memory/MEMORY.md).
+	srcRootMemory := filepath.Join(srcWorkspace, "MEMORY.md")
+	srcMemDirMemory := filepath.Join(srcWorkspace, "memory", "MEMORY.md")
+	if _, err := os.Stat(srcRootMemory); err == nil {
+		if _, err := os.Stat(srcMemDirMemory); os.IsNotExist(err) {
+			dstMemDirMemory := filepath.Join(dstWorkspace, "memory", "MEMORY.md")
+			action := planFileCopy(srcRootMemory, dstMemDirMemory, force)
+			if action.Type != ActionSkip || action.Description != "" {
+				actions = append(actions, action)
+			}
 		}
 	}
 

@@ -387,13 +387,13 @@ func TestPlanWorkspaceMigration(t *testing.T) {
 				skipCount++
 			}
 		}
-		if copyCount != 3 {
-			t.Errorf("expected 3 copies, got %d", copyCount)
-		}
-		if skipCount != 2 {
-			t.Errorf("expected 2 skips (TOOLS.md, HEARTBEAT.md), got %d", skipCount)
-		}
-	})
+			if copyCount != 3 {
+				t.Errorf("expected 3 copies, got %d", copyCount)
+			}
+			if skipCount != 6 {
+				t.Errorf("expected 6 skips (missing .gitignore, IDENTITY.md, MEMORY.md, TOOLS.md, HEARTBEAT.md, client_secret.json), got %d", skipCount)
+			}
+		})
 
 	t.Run("plans backup for existing destination files", func(t *testing.T) {
 		srcDir := t.TempDir()
