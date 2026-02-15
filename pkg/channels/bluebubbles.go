@@ -442,7 +442,42 @@ func extractMessagePayload(payload map[string]any) map[string]any {
 			_ = json.Unmarshal([]byte(s), &msg)
 		}
 	}
+	// Some BlueBubbles webhook formats keep chat fields (chatGuid, isGroup, chatId)
+	// alongside the message object rather than inside it (e.g. payload.data.chatGuid).
+	// Merge those wrapper fields into the message map so normalization can reliably
+	// determine group routing.
+	if msg != nil {
+		mergeMessageWrapperFields(msg, payload)
+		mergeMessageWrapperFields(msg, data)
+	}
 	return msg
+}
+
+func mergeIfMissing(dst map[string]any, src map[string]any, keys ...string) {
+	if dst == nil || src == nil {
+		return
+	}
+	for _, k := range keys {
+		if _, ok := dst[k]; ok && dst[k] != nil {
+			continue
+		}
+		if v, ok := src[k]; ok && v != nil {
+			dst[k] = v
+		}
+	}
+}
+
+func mergeMessageWrapperFields(msg map[string]any, wrapper map[string]any) {
+	if msg == nil || wrapper == nil {
+		return
+	}
+	mergeIfMissing(msg, wrapper,
+		"chatGuid", "chat_guid",
+		"chatIdentifier", "chat_identifier",
+		"chatId", "chat_id",
+		"isGroup", "is_group", "group",
+	)
+	mergeIfMissing(msg, wrapper, "chat", "conversation", "handle", "sender")
 }
 
 func readString(m map[string]any, keys ...string) string {
