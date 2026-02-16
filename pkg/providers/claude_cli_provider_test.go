@@ -164,6 +164,52 @@ func TestChat_Success(t *testing.T) {
 	}
 }
 
+func TestChat_UnsetsClaudeCodeEnv(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mock CLI scripts not supported on Windows")
+	}
+
+	dir := t.TempDir()
+	script := filepath.Join(dir, "claude")
+	content := `#!/bin/sh
+if [ -n "$CLAUDECODE" ]; then
+  echo "CLAUDECODE is set" >&2
+  exit 1
+fi
+cat <<'EOFMOCK'
+{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"test","usage":{"input_tokens":1,"output_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}
+EOFMOCK
+`
+	if err := os.WriteFile(script, []byte(content), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	prev, had := os.LookupEnv("CLAUDECODE")
+	if err := os.Setenv("CLAUDECODE", "1"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if had {
+			_ = os.Setenv("CLAUDECODE", prev)
+		} else {
+			_ = os.Unsetenv("CLAUDECODE")
+		}
+	})
+
+	p := NewClaudeCliProvider(t.TempDir())
+	p.command = script
+
+	resp, err := p.Chat(context.Background(), []Message{
+		{Role: "user", Content: "Hello"},
+	}, nil, "", nil)
+	if err != nil {
+		t.Fatalf("Chat() error = %v", err)
+	}
+	if resp.Content != "ok" {
+		t.Errorf("Content = %q, want %q", resp.Content, "ok")
+	}
+}
+
 func TestChat_IsErrorResponse(t *testing.T) {
 	mockJSON := `{"type":"result","subtype":"error","is_error":true,"result":"Rate limit exceeded","session_id":"s1","total_cost_usd":0}`
 	script := createMockCLI(t, mockJSON, "", 0)

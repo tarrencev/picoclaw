@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -38,6 +39,18 @@ func (p *ClaudeCliProvider) Chat(ctx context.Context, messages []Message, tools 
 	args = append(args, "-") // read from stdin
 
 	cmd := exec.CommandContext(ctx, p.command, args...)
+	// Claude Code refuses to run when it detects it's launched from inside another
+	// Claude Code session (via CLAUDECODE). PicoClaw frequently runs inside other
+	// agent shells, so strip it for the subprocess.
+	env := os.Environ()
+	filtered := env[:0]
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "CLAUDECODE=") {
+			continue
+		}
+		filtered = append(filtered, kv)
+	}
+	cmd.Env = filtered
 	if p.workspace != "" {
 		cmd.Dir = p.workspace
 	}
