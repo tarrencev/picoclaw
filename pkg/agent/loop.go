@@ -191,10 +191,15 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 				continue
 			}
 
-			response, err := al.processMessage(ctx, msg)
-			if err != nil {
-				response = fmt.Sprintf("Error processing message: %v", err)
-			}
+				// BlueBubbles UX: mark as read immediately, and show typing indicator while processing.
+				al.maybeMarkBlueBubblesRead(ctx, msg)
+				stopTyping := al.maybeSendBlueBubblesTyping(ctx, msg)
+
+				response, err := al.processMessage(ctx, msg)
+				stopTyping()
+				if err != nil {
+					response = fmt.Sprintf("Error processing message: %v", err)
+				}
 
 			if response != "" {
 				// Check if the message tool already sent a response during this round.
@@ -215,11 +220,8 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 				}
 			}
 
-			// Best-effort: after processing an inbound BlueBubbles message, mark its chat as read.
-			// This mirrors OpenClaw behavior and keeps iMessage threads from accumulating unread state.
-			al.maybeMarkBlueBubblesRead(ctx, msg, err)
+			}
 		}
-	}
 
 	return nil
 }
@@ -228,17 +230,7 @@ func (al *AgentLoop) Stop() {
 	al.running.Store(false)
 }
 
-func (al *AgentLoop) maybeMarkBlueBubblesRead(parent context.Context, msg bus.InboundMessage, processErr error) {
-	if processErr != nil {
-		return
-	}
-	if msg.Channel != "bluebubbles" {
-		return
-	}
-	if al.blueBubbles == nil {
-		return
-	}
-
+func (al *AgentLoop) resolveBlueBubblesChatGUID(ctx context.Context, msg bus.InboundMessage) string {
 	chatGUID := ""
 	if msg.Metadata != nil {
 		chatGUID = strings.TrimSpace(msg.Metadata["chat_guid"])
@@ -250,42 +242,81 @@ func (al *AgentLoop) maybeMarkBlueBubblesRead(parent context.Context, msg bus.In
 		if strings.HasPrefix(chatID, "chat_guid:") {
 			chatGUID = strings.TrimSpace(chatID[len("chat_guid:"):])
 		} else if strings.Contains(chatID, ";-;") || strings.Contains(chatID, ";+;") {
-			// Some skills/tools may pass the raw chat GUID.
+			// Some flows use the raw chat GUID as the chat target.
 			chatGUID = chatID
 		}
 	}
 
-	go func(chatID, chatGUID string) {
-		ctx, cancel := context.WithTimeout(parent, 5*time.Second)
-		defer cancel()
-
-		if strings.TrimSpace(chatGUID) == "" {
-			// Last resort: resolve from handle/chat target.
-			resolved, err := al.blueBubbles.ResolveChatGUID(ctx, chatID)
-			if err != nil {
-				logger.DebugCF("agent", "BlueBubbles ResolveChatGUID failed", map[string]interface{}{
-					"error":  err.Error(),
-					"chatID": chatID,
-				})
-				return
-			}
-			chatGUID = strings.TrimSpace(resolved)
+	if strings.TrimSpace(chatGUID) == "" {
+		// Last resort: resolve from handle/chat target.
+		resolved, err := al.blueBubbles.ResolveChatGUID(ctx, msg.ChatID)
+		if err != nil {
+			logger.DebugCF("agent", "BlueBubbles ResolveChatGUID failed", map[string]interface{}{
+				"error":  err.Error(),
+				"chatID": msg.ChatID,
+			})
+			return ""
 		}
+		chatGUID = strings.TrimSpace(resolved)
+	}
 
-		if strings.TrimSpace(chatGUID) == "" {
-			return
-		}
-		if err := al.blueBubbles.MarkChatRead(ctx, chatGUID); err != nil {
-			logger.WarnCF("agent", "BlueBubbles mark-as-read failed", map[string]interface{}{
+	return chatGUID
+}
+
+func (al *AgentLoop) maybeMarkBlueBubblesRead(parent context.Context, msg bus.InboundMessage) {
+	if msg.Channel != "bluebubbles" || al.blueBubbles == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
+	defer cancel()
+
+	chatGUID := al.resolveBlueBubblesChatGUID(ctx, msg)
+	if chatGUID == "" {
+		return
+	}
+
+	if err := al.blueBubbles.MarkChatRead(ctx, chatGUID); err != nil {
+		logger.DebugCF("agent", "BlueBubbles mark-as-read failed", map[string]interface{}{
+			"error":    err.Error(),
+			"chat_guid": chatGUID,
+		})
+	}
+}
+
+// maybeSendBlueBubblesTyping starts the typing indicator for a BlueBubbles chat.
+// Returns a stop function that should be called when processing is complete.
+func (al *AgentLoop) maybeSendBlueBubblesTyping(parent context.Context, msg bus.InboundMessage) func() {
+	if msg.Channel != "bluebubbles" || al.blueBubbles == nil {
+		return func() {}
+	}
+
+	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
+	defer cancel()
+
+	chatGUID := al.resolveBlueBubblesChatGUID(ctx, msg)
+	if chatGUID == "" {
+		return func() {}
+	}
+
+	if err := al.blueBubbles.StartTyping(ctx, chatGUID); err != nil {
+		logger.DebugCF("agent", "BlueBubbles start typing failed", map[string]interface{}{
+			"error":    err.Error(),
+			"chat_guid": chatGUID,
+		})
+		return func() {}
+	}
+
+	return func() {
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer stopCancel()
+		if err := al.blueBubbles.StopTyping(stopCtx, chatGUID); err != nil {
+			logger.DebugCF("agent", "BlueBubbles stop typing failed", map[string]interface{}{
 				"error":    err.Error(),
 				"chat_guid": chatGUID,
 			})
-		} else {
-			logger.DebugCF("agent", "BlueBubbles marked chat as read", map[string]interface{}{
-				"chat_guid": chatGUID,
-			})
 		}
-	}(msg.ChatID, chatGUID)
+	}
 }
 
 func (al *AgentLoop) RegisterTool(tool tools.Tool) {

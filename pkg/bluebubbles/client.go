@@ -219,6 +219,32 @@ func (c *Client) ResolveChatGUID(ctx context.Context, target string) (string, er
 	return "", nil
 }
 
+// StartTyping sends a typing indicator for the given chat.
+// BlueBubbles endpoint: POST /api/v1/chat/:chatGuid/typing
+func (c *Client) StartTyping(ctx context.Context, chatGUID string) error {
+	chatGUID = strings.TrimSpace(chatGUID)
+	if chatGUID == "" {
+		return fmt.Errorf("bluebubbles: chat_guid is required")
+	}
+
+	path := "/api/v1/chat/" + url.PathEscape(chatGUID) + "/typing"
+	_, _, err := c.doJSON(ctx, http.MethodPost, path, nil, nil)
+	return err
+}
+
+// StopTyping clears the typing indicator for the given chat.
+// BlueBubbles endpoint: DELETE /api/v1/chat/:chatGuid/typing
+func (c *Client) StopTyping(ctx context.Context, chatGUID string) error {
+	chatGUID = strings.TrimSpace(chatGUID)
+	if chatGUID == "" {
+		return fmt.Errorf("bluebubbles: chat_guid is required")
+	}
+
+	path := "/api/v1/chat/" + url.PathEscape(chatGUID) + "/typing"
+	_, _, err := c.doJSON(ctx, http.MethodDelete, path, nil, nil)
+	return err
+}
+
 // MarkChatRead marks the given chat GUID as read.
 // BlueBubbles endpoint: POST /api/v1/chat/:chatGuid/read
 func (c *Client) MarkChatRead(ctx context.Context, chatGUID string) error {
