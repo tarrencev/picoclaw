@@ -18,6 +18,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/sipeed/picoclaw/pkg/bluebubbles"
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/constants"
@@ -40,6 +41,7 @@ type AgentLoop struct {
 	state          *state.Manager
 	contextBuilder *ContextBuilder
 	tools          *tools.ToolRegistry
+	blueBubbles    *bluebubbles.Client
 	running        atomic.Bool
 	summarizing    sync.Map // Tracks which sessions are currently being summarized
 }
@@ -58,7 +60,7 @@ type processOptions struct {
 
 // createToolRegistry creates a tool registry with common tools.
 // This is shared between main agent and subagents.
-func createToolRegistry(workspace string, restrict bool, cfg *config.Config, msgBus *bus.MessageBus) *tools.ToolRegistry {
+func createToolRegistry(workspace string, restrict bool, cfg *config.Config, msgBus *bus.MessageBus, bbClient *bluebubbles.Client) *tools.ToolRegistry {
 	registry := tools.NewToolRegistry()
 
 	// File system tools
@@ -97,7 +99,22 @@ func createToolRegistry(workspace string, restrict bool, cfg *config.Config, msg
 		})
 		return nil
 	})
+	if bbClient == nil && cfg.Channels.BlueBubbles.ServerURL != "" && cfg.Channels.BlueBubbles.Password != "" {
+		if bb, err := bluebubbles.NewClient(cfg.Channels.BlueBubbles.ServerURL, cfg.Channels.BlueBubbles.Password, bluebubbles.ClientOptions{}); err == nil {
+			bbClient = bb
+		} else {
+			logger.WarnCF("agent", "Failed to init BlueBubbles client", map[string]interface{}{
+				"error": err.Error(),
+			})
+		}
+	}
+	if bbClient != nil {
+		messageTool.SetBlueBubblesClient(bbClient)
+	}
 	registry.Register(messageTool)
+
+	// Voice calls tool (ElevenLabs agent_call + transcript retrieval)
+	registry.Register(tools.NewVoiceCallTool(cfg.VoiceCalls))
 
 	return registry
 }
@@ -108,12 +125,23 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 
 	restrict := cfg.Agents.Defaults.RestrictToWorkspace
 
+	var bbClient *bluebubbles.Client
+	if cfg.Channels.BlueBubbles.ServerURL != "" && cfg.Channels.BlueBubbles.Password != "" {
+		if bb, err := bluebubbles.NewClient(cfg.Channels.BlueBubbles.ServerURL, cfg.Channels.BlueBubbles.Password, bluebubbles.ClientOptions{Timeout: 5 * time.Second}); err == nil {
+			bbClient = bb
+		} else {
+			logger.WarnCF("agent", "Failed to init BlueBubbles client", map[string]interface{}{
+				"error": err.Error(),
+			})
+		}
+	}
+
 	// Create tool registry for main agent
-	toolsRegistry := createToolRegistry(workspace, restrict, cfg, msgBus)
+	toolsRegistry := createToolRegistry(workspace, restrict, cfg, msgBus, bbClient)
 
 	// Create subagent manager with its own tool registry
 	subagentManager := tools.NewSubagentManager(provider, cfg.Agents.Defaults.Model, workspace, msgBus)
-	subagentTools := createToolRegistry(workspace, restrict, cfg, msgBus)
+	subagentTools := createToolRegistry(workspace, restrict, cfg, msgBus, bbClient)
 	// Subagent doesn't need spawn/subagent tools to avoid recursion
 	subagentManager.SetTools(subagentTools)
 
@@ -145,6 +173,7 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 		state:          stateManager,
 		contextBuilder: contextBuilder,
 		tools:          toolsRegistry,
+		blueBubbles:    bbClient,
 		summarizing:    sync.Map{},
 	}
 }
@@ -162,10 +191,15 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 				continue
 			}
 
-			response, err := al.processMessage(ctx, msg)
-			if err != nil {
-				response = fmt.Sprintf("Error processing message: %v", err)
-			}
+				// BlueBubbles UX: mark as read immediately, and show typing indicator while processing.
+				al.maybeMarkBlueBubblesRead(ctx, msg)
+				stopTyping := al.maybeSendBlueBubblesTyping(ctx, msg)
+
+				response, err := al.processMessage(ctx, msg)
+				stopTyping()
+				if err != nil {
+					response = fmt.Sprintf("Error processing message: %v", err)
+				}
 
 			if response != "" {
 				// Check if the message tool already sent a response during this round.
@@ -185,14 +219,104 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 					})
 				}
 			}
+
+			}
 		}
-	}
 
 	return nil
 }
 
 func (al *AgentLoop) Stop() {
 	al.running.Store(false)
+}
+
+func (al *AgentLoop) resolveBlueBubblesChatGUID(ctx context.Context, msg bus.InboundMessage) string {
+	chatGUID := ""
+	if msg.Metadata != nil {
+		chatGUID = strings.TrimSpace(msg.Metadata["chat_guid"])
+	}
+
+	// Fallback: allow group session identifiers to carry the chat GUID.
+	if chatGUID == "" {
+		chatID := strings.TrimSpace(msg.ChatID)
+		if strings.HasPrefix(chatID, "chat_guid:") {
+			chatGUID = strings.TrimSpace(chatID[len("chat_guid:"):])
+		} else if strings.Contains(chatID, ";-;") || strings.Contains(chatID, ";+;") {
+			// Some flows use the raw chat GUID as the chat target.
+			chatGUID = chatID
+		}
+	}
+
+	if strings.TrimSpace(chatGUID) == "" {
+		// Last resort: resolve from handle/chat target.
+		resolved, err := al.blueBubbles.ResolveChatGUID(ctx, msg.ChatID)
+		if err != nil {
+			logger.DebugCF("agent", "BlueBubbles ResolveChatGUID failed", map[string]interface{}{
+				"error":  err.Error(),
+				"chatID": msg.ChatID,
+			})
+			return ""
+		}
+		chatGUID = strings.TrimSpace(resolved)
+	}
+
+	return chatGUID
+}
+
+func (al *AgentLoop) maybeMarkBlueBubblesRead(parent context.Context, msg bus.InboundMessage) {
+	if msg.Channel != "bluebubbles" || al.blueBubbles == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
+	defer cancel()
+
+	chatGUID := al.resolveBlueBubblesChatGUID(ctx, msg)
+	if chatGUID == "" {
+		return
+	}
+
+	if err := al.blueBubbles.MarkChatRead(ctx, chatGUID); err != nil {
+		logger.DebugCF("agent", "BlueBubbles mark-as-read failed", map[string]interface{}{
+			"error":    err.Error(),
+			"chat_guid": chatGUID,
+		})
+	}
+}
+
+// maybeSendBlueBubblesTyping starts the typing indicator for a BlueBubbles chat.
+// Returns a stop function that should be called when processing is complete.
+func (al *AgentLoop) maybeSendBlueBubblesTyping(parent context.Context, msg bus.InboundMessage) func() {
+	if msg.Channel != "bluebubbles" || al.blueBubbles == nil {
+		return func() {}
+	}
+
+	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
+	defer cancel()
+
+	chatGUID := al.resolveBlueBubblesChatGUID(ctx, msg)
+	if chatGUID == "" {
+		return func() {}
+	}
+
+	if err := al.blueBubbles.StartTyping(ctx, chatGUID); err != nil {
+		logger.DebugCF("agent", "BlueBubbles start typing failed", map[string]interface{}{
+			"error":    err.Error(),
+			"chat_guid": chatGUID,
+		})
+		return func() {}
+	}
+
+	return func() {
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer stopCancel()
+		if err := al.blueBubbles.StopTyping(stopCtx, chatGUID); err != nil {
+			logger.DebugCF("agent", "BlueBubbles stop typing failed", map[string]interface{}{
+				"error":    err.Error(),
+				"chat_guid": chatGUID,
+			})
+		}
+	}
 }
 
 func (al *AgentLoop) RegisterTool(tool tools.Tool) {

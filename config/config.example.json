@@ -68,6 +68,16 @@
       "reconnect_interval": 5,
       "group_trigger_prefix": [],
       "allow_from": []
+    },
+    "bluebubbles": {
+      "enabled": false,
+      "server_url": "http://localhost:1234",
+      "password": "YOUR_BLUEBUBBLES_PASSWORD",
+      "webhook_path": "/bluebubbles-webhook",
+      "dm_policy": "pairing",
+      "allow_from": [],
+      "group_policy": "allowlist",
+      "group_allow_from": []
     }
   },
   "providers": {
@@ -111,8 +121,13 @@
   },
   "tools": {
     "web": {
-      "search": {
+      "brave": {
+        "enabled": false,
         "api_key": "YOUR_BRAVE_API_KEY",
+        "max_results": 5
+      },
+      "duckduckgo": {
+        "enabled": true,
         "max_results": 5
       }
     }
@@ -128,5 +143,40 @@
   "gateway": {
     "host": "0.0.0.0",
     "port": 18790
+  },
+  "voice_calls": {
+    "enabled": false,
+    "provider": "twilio",
+    "public_url": "",
+    "webhook_path": "/voice/webhook",
+    "stream_path": "/voice/stream",
+    "from_number": "",
+    "default_to_number": "",
+    "inbound_policy": "allowlist",
+    "allow_from": [],
+    "skip_signature_verification": false,
+    "store_dir": "",
+    "elevenlabs_agent_id": "",
+    "elevenlabs_phone_number_id": "",
+    "twilio": {
+      "account_sid": "",
+      "auth_token": ""
+    },
+    "tts": {
+      "provider": "elevenlabs",
+      "elevenlabs": {
+        "api_key": "",
+        "base_url": "https://api.elevenlabs.io",
+        "voice_id": "",
+        "model_id": ""
+      }
+    },
+    "streaming": {
+      "enabled": false,
+      "stt_provider": "openai-realtime",
+      "stream_path": "/voice/stream",
+      "openai_api_key": "",
+      "stt_model": ""
+    }
   }
 }

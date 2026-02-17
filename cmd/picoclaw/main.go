@@ -29,6 +29,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/cron"
 	"github.com/sipeed/picoclaw/pkg/devices"
 	"github.com/sipeed/picoclaw/pkg/heartbeat"
+	"github.com/sipeed/picoclaw/pkg/httpserver"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/migrate"
 	"github.com/sipeed/picoclaw/pkg/providers"
@@ -562,6 +563,17 @@ func gatewayCmd() {
 	// Setup cron tool and service
 	cronService := setupCronTool(agentLoop, msgBus, cfg.WorkspacePath())
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Shared HTTP server for all webhooks (BlueBubbles, voice-calls, LINE, etc.)
+	httpAddr := fmt.Sprintf("%s:%d", cfg.Gateway.Host, cfg.Gateway.Port)
+	httpSrv := httpserver.New(httpAddr)
+	if err := httpSrv.Start(); err != nil {
+		fmt.Printf("Error starting HTTP server on %s: %v\n", httpAddr, err)
+		os.Exit(1)
+	}
+
 	heartbeatService := heartbeat.NewHeartbeatService(
 		cfg.WorkspacePath(),
 		cfg.Heartbeat.Interval,
@@ -586,7 +598,7 @@ func gatewayCmd() {
 		return tools.SilentResult(response)
 	})
 
-	channelManager, err := channels.NewManager(cfg, msgBus)
+	channelManager, err := channels.NewManager(cfg, msgBus, httpSrv)
 	if err != nil {
 		fmt.Printf("Error creating channel manager: %v\n", err)
 		os.Exit(1)
@@ -629,9 +641,6 @@ func gatewayCmd() {
 	fmt.Printf("✓ Gateway started on %s:%d\n", cfg.Gateway.Host, cfg.Gateway.Port)
 	fmt.Println("Press Ctrl+C to stop")
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	if err := cronService.Start(); err != nil {
 		fmt.Printf("Error starting cron service: %v\n", err)
 	}
@@ -671,6 +680,11 @@ func gatewayCmd() {
 	cronService.Stop()
 	agentLoop.Stop()
 	channelManager.StopAll(ctx)
+	{
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = httpSrv.Shutdown(shutdownCtx)
+		shutdownCancel()
+	}
 	fmt.Println("✓ Gateway stopped")
 }
 

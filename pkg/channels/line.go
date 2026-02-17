@@ -17,6 +17,7 @@ import (
 
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/sipeed/picoclaw/pkg/httpserver"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/utils"
 )
@@ -43,7 +44,7 @@ type replyTokenEntry struct {
 type LINEChannel struct {
 	*BaseChannel
 	config         config.LINEConfig
-	httpServer     *http.Server
+	httpServer     *httpserver.Server
 	botUserID      string   // Bot's user ID
 	botBasicID     string   // Bot's basic ID (e.g. @216ru...)
 	botDisplayName string   // Bot's display name for text-based mention detection
@@ -54,7 +55,7 @@ type LINEChannel struct {
 }
 
 // NewLINEChannel creates a new LINE channel instance.
-func NewLINEChannel(cfg config.LINEConfig, messageBus *bus.MessageBus) (*LINEChannel, error) {
+func NewLINEChannel(cfg config.LINEConfig, messageBus *bus.MessageBus, httpServer *httpserver.Server) (*LINEChannel, error) {
 	if cfg.ChannelSecret == "" || cfg.ChannelAccessToken == "" {
 		return nil, fmt.Errorf("line channel_secret and channel_access_token are required")
 	}
@@ -64,6 +65,7 @@ func NewLINEChannel(cfg config.LINEConfig, messageBus *bus.MessageBus) (*LINECha
 	return &LINEChannel{
 		BaseChannel: base,
 		config:      cfg,
+		httpServer:  httpServer,
 	}, nil
 }
 
@@ -86,30 +88,19 @@ func (c *LINEChannel) Start(ctx context.Context) error {
 		})
 	}
 
-	mux := http.NewServeMux()
 	path := c.config.WebhookPath
 	if path == "" {
 		path = "/webhook/line"
 	}
-	mux.HandleFunc(path, c.webhookHandler)
-
-	addr := fmt.Sprintf("%s:%d", c.config.WebhookHost, c.config.WebhookPort)
-	c.httpServer = &http.Server{
-		Addr:    addr,
-		Handler: mux,
+	if c.httpServer == nil {
+		return fmt.Errorf("shared HTTP server not configured")
 	}
-
-	go func() {
-		logger.InfoCF("line", "LINE webhook server listening", map[string]interface{}{
-			"addr": addr,
-			"path": path,
-		})
-		if err := c.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.ErrorCF("line", "Webhook server error", map[string]interface{}{
-				"error": err.Error(),
-			})
-		}
-	}()
+	if err := c.httpServer.HandleFunc(path, c.webhookHandler); err != nil {
+		return err
+	}
+	logger.InfoCF("line", "LINE webhook registered", map[string]interface{}{
+		"path": path,
+	})
 
 	c.setRunning(true)
 	logger.InfoC("line", "LINE channel started (Webhook Mode)")
@@ -156,16 +147,6 @@ func (c *LINEChannel) Stop(ctx context.Context) error {
 
 	if c.cancel != nil {
 		c.cancel()
-	}
-
-	if c.httpServer != nil {
-		shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		defer cancel()
-		if err := c.httpServer.Shutdown(shutdownCtx); err != nil {
-			logger.ErrorCF("line", "Webhook server shutdown error", map[string]interface{}{
-				"error": err.Error(),
-			})
-		}
 	}
 
 	c.setRunning(false)

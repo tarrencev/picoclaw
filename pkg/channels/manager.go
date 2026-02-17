@@ -14,6 +14,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/constants"
+	"github.com/sipeed/picoclaw/pkg/httpserver"
 	"github.com/sipeed/picoclaw/pkg/logger"
 )
 
@@ -21,6 +22,7 @@ type Manager struct {
 	channels     map[string]Channel
 	bus          *bus.MessageBus
 	config       *config.Config
+	httpServer   *httpserver.Server
 	dispatchTask *asyncTask
 	mu           sync.RWMutex
 }
@@ -29,11 +31,12 @@ type asyncTask struct {
 	cancel context.CancelFunc
 }
 
-func NewManager(cfg *config.Config, messageBus *bus.MessageBus) (*Manager, error) {
+func NewManager(cfg *config.Config, messageBus *bus.MessageBus, httpServer *httpserver.Server) (*Manager, error) {
 	m := &Manager{
-		channels: make(map[string]Channel),
-		bus:      messageBus,
-		config:   cfg,
+		channels:   make(map[string]Channel),
+		bus:        messageBus,
+		config:     cfg,
+		httpServer: httpServer,
 	}
 
 	if err := m.initChannels(); err != nil {
@@ -152,7 +155,7 @@ func (m *Manager) initChannels() error {
 
 	if m.config.Channels.LINE.Enabled && m.config.Channels.LINE.ChannelAccessToken != "" {
 		logger.DebugC("channels", "Attempting to initialize LINE channel")
-		line, err := NewLINEChannel(m.config.Channels.LINE, m.bus)
+		line, err := NewLINEChannel(m.config.Channels.LINE, m.bus, m.httpServer)
 		if err != nil {
 			logger.ErrorCF("channels", "Failed to initialize LINE channel", map[string]interface{}{
 				"error": err.Error(),
@@ -160,6 +163,19 @@ func (m *Manager) initChannels() error {
 		} else {
 			m.channels["line"] = line
 			logger.InfoC("channels", "LINE channel enabled successfully")
+		}
+	}
+
+	if m.config.Channels.BlueBubbles.Enabled {
+		logger.DebugC("channels", "Attempting to initialize BlueBubbles channel")
+		bb, err := NewBlueBubblesChannel(m.config.Channels.BlueBubbles, m.bus, m.httpServer)
+		if err != nil {
+			logger.ErrorCF("channels", "Failed to initialize BlueBubbles channel", map[string]interface{}{
+				"error": err.Error(),
+			})
+		} else {
+			m.channels["bluebubbles"] = bb
+			logger.InfoC("channels", "BlueBubbles channel enabled successfully")
 		}
 	}
 
